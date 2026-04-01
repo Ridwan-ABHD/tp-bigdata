@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: tp-bigdata
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=${DB_USER:-etl_user}
+      - DB_PASSWORD=${DB_PASSWORD:-etl_password}
+      - DB_NAME=${DB_NAME:-etl_db}
+    networks:
+      - bigdata-network
+    depends_on:
+      - db
+      - minio
+    ports:
+      - "8501:8501"
+
+  db:
+    image: postgres:latest
+    container_name: tp-bigdata-db
+    environment:
+      - POSTGRES_USER=${DB_USER:-etl_user}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-etl_password}
+      - POSTGRES_DB=${DB_NAME:-etl_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - bigdata-network
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-etl_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: tp-bigdata-minio
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    networks:
+      - bigdata-network
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: minio server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+    driver: local
+  minio_data:
+    driver: local
+
+networks:
+  bigdata-network:
+    driver: bridge

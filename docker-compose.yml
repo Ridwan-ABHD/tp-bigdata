@@ -22,7 +22,7 @@ services:
       - "8501:8501"
 
   db:
-    image: postgres:latest
+    image: postgres:16
     container_name: tp-bigdata-db
     environment:
       - POSTGRES_USER=${DB_USER:-etl_user}

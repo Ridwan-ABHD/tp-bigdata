@@ -8,4 +8,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD python -m script.src.main && tail -f /dev/null
+CMD python -m script.src.main && streamlit run script/src/app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true

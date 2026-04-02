@@ -26,10 +26,11 @@ def main() -> None:
     from script.src.ingestion import run as ingest
     ingest()
 
-    # Etape 2 — Scraping marché occasion -> MinIO
-    log.info(">>> ETAPE 2 : Scraping Marché Occasion -> MinIO")
-    from script.src.scraping import run as scrape
-    n_annonces = scrape()
+    # Etape 2 — Scraping marché occasion -> MinIO (AutoScout24 — plus accessible que La Centrale)
+    log.info(">>> ETAPE 2 : Scraping Marché Occasion -> MinIO (AutoScout24)")
+    from script.src.scraping_autoscout import main as scrape_autoscout
+    annonces = scrape_autoscout()
+    n_annonces = len(annonces) if annonces else 0
     if n_annonces == 0:
         log.warning("Scraping : aucune annonce collectée (site inaccessible ?). "
                     "Le pipeline continue avec les données ADEME uniquement.")

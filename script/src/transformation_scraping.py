@@ -62,13 +62,62 @@ TABLE_ADEME      = "caracteristiques_techniques"
 CONFLICT_COLUMN  = "url_annonce"    # clé UPSERT unique
 
 # Fuzzy matching
-FUZZY_THRESHOLD  = 0.72   # score SequenceMatcher minimum pour valider un match
-FUZZY_MARQUE_THRESHOLD = 0.80  # seuil plus strict sur la marque
+FUZZY_THRESHOLD  = 0.72   # score global minimum (0.4*marque + 0.6*modele)
+FUZZY_MARQUE_THRESHOLD = 0.80  # seuil marque seule (moins strict que le global)
 
 # Seuils qualité IQR (gouvernance §2.2 — adaptés au marché occasion)
-PRIX_MIN_ABSOLU   = 500      # € — en-dessous = erreur de saisie
-PRIX_MAX_ABSOLU   = 500_000  # € — au-dessus = véhicule de collection hors scope
-KM_MAX_ABSOLU     = 700_000  # km — au-dessus = incohérence
+PRIX_MIN_ABSOLU   = 1_000    # € — en-dessous = erreur de saisie
+PRIX_MAX_ABSOLU   = 150_000  # € — au-dessus = hors scope (sauf premium)
+KM_MAX_ABSOLU     = 500_000  # km — au-dessus = incohérence
+
+# Marques premium autorisées au-delà de 150k€
+MARQUES_PREMIUM = {"bmw", "mercedes", "mercedes-benz", "audi", "porsche", "alpine", "jaguar", "tesla"}
+
+# Mapping carburant pour validation cross-source (annonce <-> ADEME)
+# Normalise les différentes appellations vers un standard commun
+CARBURANT_MAP = {
+    # Essence et dérivés
+    "essence": "ESSENCE",
+    "super": "ESSENCE",
+    "sp95": "ESSENCE",
+    "sp98": "ESSENCE",
+    "ethanol": "ESSENCE",
+    "e85": "ESSENCE",
+    # Diesel et dérivés (ADEME utilise "GAZOLE")
+    "diesel": "GAZOLE",
+    "gazole": "GAZOLE",
+    "gasoil": "GAZOLE",
+    # Électrique
+    "electrique": "ELECTRIQUE",
+    "électrique": "ELECTRIQUE",
+    "electric": "ELECTRIQUE",
+    # Hybride essence (ADEME: ESS+ELEC HNR ou similaire)
+    "hybride": "HYBRIDE",
+    "hybride rechargeable": "HYBRIDE RECHARGEABLE",
+    "plug-in": "HYBRIDE RECHARGEABLE",
+    "phev": "HYBRIDE RECHARGEABLE",
+    "ess+elec hnr": "HYBRIDE",
+    "ess+elec hr": "HYBRIDE RECHARGEABLE",
+    # Hybride diesel (ADEME: GAZ+ELEC HNR)
+    "gaz+elec hnr": "HYBRIDE",
+    "gaz+elec hr": "HYBRIDE RECHARGEABLE",
+    # GPL/GNV
+    "gpl": "GPL",
+    "gnv": "GNV",
+}
+
+# Groupes de carburants compatibles pour le fuzzy join
+# Permet de matcher Diesel annonce avec GAZOLE ADEME, etc.
+CARBURANT_GROUPS = {
+    "ESSENCE": {"ESSENCE"},
+    "GAZOLE": {"GAZOLE", "DIESEL"},
+    "DIESEL": {"GAZOLE", "DIESEL"},
+    "ELECTRIQUE": {"ELECTRIQUE"},
+    "HYBRIDE": {"HYBRIDE", "HYBRIDE RECHARGEABLE", "ESS+ELEC HNR", "ESS+ELEC HR", "GAZ+ELEC HNR", "GAZ+ELEC HR"},
+    "HYBRIDE RECHARGEABLE": {"HYBRIDE", "HYBRIDE RECHARGEABLE", "ESS+ELEC HR", "GAZ+ELEC HR"},
+    "GPL": {"GPL"},
+    "GNV": {"GNV"},
+}
 
 # Finitions / versions à supprimer lors de la normalisation du modèle
 # pour aligner "CLIO IV Business" -> "clio" (qui correspond à "CLIO" ADEME)
@@ -162,7 +211,7 @@ def _get_minio_client() -> Minio:
 
 def load_raw_from_minio() -> pd.DataFrame:
     """
-    Charge le fichier raw_market_data_*.json le plus récent depuis MinIO.
+    Charge le fichier JSON le plus récent depuis MinIO (raw_market_data ou raw_autoscout24).
     Retourne un DataFrame avec les annonces brutes.
     """
     client = _get_minio_client()
@@ -185,11 +234,13 @@ def load_raw_from_minio() -> pd.DataFrame:
     response.release_conn()
 
     envelope = json.loads(raw_bytes.decode("utf-8"))
-    records  = envelope.get("data", [])
+    
+    # Support both formats: "data" (La Centrale) or "annonces" (AutoScout24)
+    records = envelope.get("data", []) or envelope.get("annonces", [])
 
     log.info("  %d annonces brutes chargées.", len(records))
     log.info("  Source : %s", envelope.get("source", "inconnue"))
-    log.info("  Extrait le : %s", envelope.get("extracted_at", "inconnu"))
+    log.info("  Extrait le : %s", envelope.get("extracted_at", envelope.get("scraped_date", "inconnu")))
 
     return pd.DataFrame(records)
 
@@ -309,10 +360,24 @@ def clean_data(df: pd.DataFrame, ademe_marques: Optional[set] = None) -> pd.Data
     df = df.drop_duplicates()
     log.info("  Doublons supprimés : %d", before - len(df))
 
-    # 2. Parsing numériques
-    df["prix_eur"]       = df["prix_brut"].apply(_parse_prix)
-    df["kilometrage_km"] = df["kilometrage"].apply(_parse_kilometrage)
-    df["annee"]          = df["annee"].apply(_parse_annee)
+    # 2. Parsing numériques - support both formats (La Centrale uses prix_brut, AutoScout24 uses prix_eur)
+    if "prix_brut" in df.columns:
+        df["prix_eur"] = df["prix_brut"].apply(_parse_prix)
+    elif "prix_eur" not in df.columns:
+        df["prix_eur"] = None
+    else:
+        # prix_eur already exists (AutoScout24 format)
+        df["prix_eur"] = df["prix_eur"].apply(lambda x: _parse_prix(x) if isinstance(x, str) else x)
+    
+    if "kilometrage" in df.columns:
+        df["kilometrage_km"] = df["kilometrage"].apply(_parse_kilometrage)
+    elif "kilometrage_km" not in df.columns:
+        df["kilometrage_km"] = None
+    else:
+        # kilometrage_km already exists (AutoScout24 format)
+        df["kilometrage_km"] = df["kilometrage_km"].apply(lambda x: _parse_kilometrage(x) if isinstance(x, str) else x)
+    
+    df["annee"] = df["annee"].apply(_parse_annee)
 
     # 3. Reconstruction marque/modèle pour records CSS (marque = "")
     if ademe_marques is None:
@@ -335,19 +400,40 @@ def clean_data(df: pd.DataFrame, ademe_marques: Optional[set] = None) -> pd.Data
         )
 
     # 4. Filtres absolus (valeurs physiquement impossibles)
+    # Les marques non-premium ne dépassent généralement pas 80k€
+    # Les marques premium peuvent aller jusqu'à 300k€
+    PRIX_MAX_STANDARD = 80_000  # Pour Renault, Peugeot, Dacia, etc.
+    PRIX_MAX_PREMIUM  = 300_000 # Pour BMW, Mercedes, Porsche, etc.
+    
+    if "marque" in df.columns:
+        df["marque_lower"] = df["marque"].fillna("").str.lower().str.strip()
+        is_premium = df["marque_lower"].isin(MARQUES_PREMIUM)
+    else:
+        is_premium = False
+    
     before = len(df)
+    # Prix min: toujours 1000€
+    # Prix max: 80k€ standard, 300k€ premium
     df = df[df["prix_eur"].isna() | (
-        (df["prix_eur"] >= PRIX_MIN_ABSOLU) & (df["prix_eur"] <= PRIX_MAX_ABSOLU)
+        (df["prix_eur"] >= PRIX_MIN_ABSOLU) & 
+        (
+            ((~is_premium) & (df["prix_eur"] <= PRIX_MAX_STANDARD)) |
+            ((is_premium) & (df["prix_eur"] <= PRIX_MAX_PREMIUM))
+        )
     )]
-    log.info("  Filtre absolu prix [%d, %d]€ : %d lignes rejetées.",
-             PRIX_MIN_ABSOLU, PRIX_MAX_ABSOLU, before - len(df))
+    log.info("  Filtre absolu prix [%d, %d/%.0f]€ (standard/premium) : %d lignes rejetées.",
+             PRIX_MIN_ABSOLU, PRIX_MAX_STANDARD, PRIX_MAX_PREMIUM, before - len(df))
+    
+    # Nettoyer colonne temporaire
+    if "marque_lower" in df.columns:
+        df = df.drop(columns=["marque_lower"])
 
     before = len(df)
     df = df[df["kilometrage_km"].isna() | (df["kilometrage_km"] <= KM_MAX_ABSOLU)]
     log.info("  Filtre absolu km [0, %d] : %d lignes rejetées.", KM_MAX_ABSOLU, before - len(df))
 
-    # 5. IQR sur prix et kilométrage (gouvernance §2.2)
-    for col, label in [("prix_eur", "Prix"), ("kilometrage_km", "Kilométrage")]:
+    # 5. IQR sur kilométrage seulement (pas sur prix car les filtres absolus sont plus robustes)
+    for col, label in [("kilometrage_km", "Kilométrage")]:
         series = df[col].dropna()
         if len(series) < 10:
             continue
@@ -396,15 +482,47 @@ def get_connection(retries: int = 10, delay: int = 5) -> psycopg2.extensions.con
 # Chargement du référentiel ADEME (pour le fuzzy join)
 # ---------------------------------------------------------------------------
 
+def _normalize_carburant(carb: str) -> str:
+    """Normalise le carburant pour comparaison cross-source."""
+    if not carb:
+        return ""
+    c = carb.strip().lower()
+    return CARBURANT_MAP.get(c, c.upper())
+
+
+def _carburant_compatible(carb_annonce: str, carb_ademe: str) -> bool:
+    """
+    Vérifie si deux carburants sont compatibles pour le fuzzy join.
+    Ex: DIESEL et GAZOLE sont compatibles, ESSENCE et ELECTRIQUE ne le sont pas.
+    """
+    if not carb_annonce or not carb_ademe:
+        return True  # Si l'un est vide, on ne bloque pas
+    
+    # Normaliser en majuscules
+    a = carb_annonce.upper()
+    b = carb_ademe.upper()
+    
+    # Même carburant exact
+    if a == b:
+        return True
+    
+    # Vérifier les groupes de compatibilité
+    group_a = CARBURANT_GROUPS.get(a, {a})
+    group_b = CARBURANT_GROUPS.get(b, {b})
+    
+    # Compatible si intersection non vide
+    return bool(group_a & group_b)
+
+
 def load_ademe_reference(conn: psycopg2.extensions.connection) -> pd.DataFrame:
     """
     Charge depuis PostgreSQL les colonnes nécessaires au fuzzy join :
-    id, marque, modele (+ versions normalisées pré-calculées).
+    id, marque, modele, carburant (+ versions normalisées pré-calculées).
 
     Retourne un DataFrame indexé pour accélérer la recherche.
     """
     query = f"""
-        SELECT id, marque, modele
+        SELECT id, marque, modele, carburant
         FROM "{TABLE_ADEME}"
         WHERE marque IS NOT NULL AND modele IS NOT NULL
     """
@@ -414,11 +532,12 @@ def load_ademe_reference(conn: psycopg2.extensions.connection) -> pd.DataFrame:
 
     if not rows:
         log.warning("Table '%s' vide ou inaccessible — fuzzy join impossible.", TABLE_ADEME)
-        return pd.DataFrame(columns=["id", "marque", "modele", "marque_norm", "modele_norm"])
+        return pd.DataFrame(columns=["id", "marque", "modele", "carburant", "marque_norm", "modele_norm", "carburant_norm"])
 
-    ref = pd.DataFrame(rows, columns=["id", "marque", "modele"])
+    ref = pd.DataFrame(rows, columns=["id", "marque", "modele", "carburant"])
     ref["marque_norm"] = ref["marque"].apply(normalize_brand)
     ref["modele_norm"] = ref["modele"].apply(normalize_model)
+    ref["carburant_norm"] = ref["carburant"].apply(_normalize_carburant)
 
     # Index groupé par marque pour accélérer la recherche
     log.info("Référentiel ADEME : %d entrées chargées (%d marques uniques).",
@@ -433,15 +552,18 @@ def load_ademe_reference(conn: psycopg2.extensions.connection) -> pd.DataFrame:
 def _find_best_match(
     marque_norm: str,
     modele_norm: str,
+    carburant_norm: str,
     ref_by_marque: dict[str, pd.DataFrame],
 ) -> tuple[Optional[int], float]:
     """
     Trouve le meilleur correspondant ADEME pour une annonce.
 
-    Stratégie en 2 étapes :
+    Stratégie en 3 étapes :
     1. Filtrage par marque (exact ou fuzzy ≥ FUZZY_MARQUE_THRESHOLD)
        pour réduire le sous-ensemble de candidats.
-    2. Fuzzy match du modèle via SequenceMatcher dans ce sous-ensemble.
+    2. Filtrage par carburant compatible (DIESEL/GAZOLE, hybrides...)
+       pour éviter les faux positifs (électrique vs thermique).
+    3. Fuzzy match du modèle via SequenceMatcher dans ce sous-ensemble.
 
     Retourne (ademe_id, score) ou (None, 0.0) si aucun match suffisant.
     """
@@ -463,7 +585,20 @@ def _find_best_match(
 
     candidates = ref_by_marque[best_marque_key]
 
-    # --- Étape 2 : fuzzy match sur le modèle parmi les candidats ---
+    # --- Étape 2 : filtrer par carburant compatible ---
+    if carburant_norm and "carburant_norm" in candidates.columns:
+        # Ne garder que les candidats avec un carburant compatible
+        compatible_mask = candidates["carburant_norm"].apply(
+            lambda ademe_carb: _carburant_compatible(carburant_norm, ademe_carb)
+        )
+        candidates_filtered = candidates[compatible_mask]
+        if not candidates_filtered.empty:
+            candidates = candidates_filtered
+        else:
+            # Aucun candidat avec carburant compatible — on rejette le match
+            return None, 0.0
+
+    # --- Étape 3 : fuzzy match sur le modèle parmi les candidats ---
     if not modele_norm:
         # Pas de modèle — retourner la marque seule avec score partiel
         return int(candidates.iloc[0]["id"]), best_marque_score * 0.5
@@ -496,6 +631,8 @@ def enrich_with_ademe(
     Ajoute deux colonnes :
     - ademe_id     : int ou None (FK vers caracteristiques_techniques)
     - match_score  : float [0, 1] — score de correspondance (traçabilité)
+    
+    RÈGLE STRICTE : le carburant de l'annonce doit correspondre au carburant ADEME.
     """
     df = df.copy()
 
@@ -511,6 +648,12 @@ def enrich_with_ademe(
         for marque, group in ademe_ref.groupby("marque_norm")
     }
 
+    # Normaliser le carburant des annonces pour la validation
+    if "carburant" in df.columns:
+        df["carburant_norm"] = df["carburant"].apply(_normalize_carburant)
+    else:
+        df["carburant_norm"] = ""
+
     ademe_ids    = []
     match_scores = []
 
@@ -518,6 +661,7 @@ def enrich_with_ademe(
         ademe_id, score = _find_best_match(
             row["marque_norm"],
             row["modele_norm"],
+            row.get("carburant_norm", ""),
             ref_by_marque,
         )
         ademe_ids.append(ademe_id)
@@ -532,7 +676,7 @@ def enrich_with_ademe(
     n_orphan  = n_total - n_matched
 
     log.info("=" * 50)
-    log.info("FUZZY JOIN — Résultats :")
+    log.info("FUZZY JOIN — Résultats (avec validation carburant) :")
     log.info("  Total annonces  : %d", n_total)
     log.info("  Avec match ADEME: %d (%.1f%%)", n_matched, n_matched / n_total * 100 if n_total else 0)
     log.info("  Orphelines      : %d (%.1f%%)", n_orphan,  n_orphan  / n_total * 100 if n_total else 0)

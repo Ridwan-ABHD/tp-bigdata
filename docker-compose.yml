@@ -21,6 +21,33 @@ services:
     ports:
       - "8501:8501"
 
+  # Scheduler automatique - rafraîchit les données toutes les heures
+  scheduler:
+    build: .
+    container_name: tp-bigdata-scheduler
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=${DB_USER:-etl_user}
+      - DB_PASSWORD=${DB_PASSWORD:-etl_password}
+      - DB_NAME=${DB_NAME:-etl_db}
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - REFRESH_INTERVAL=${REFRESH_INTERVAL:-3600}  # 1 heure par défaut
+    networks:
+      - bigdata-network
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    command: python -m script.src.scheduler
+    restart: unless-stopped
+
   db:
     image: postgres:16
     container_name: tp-bigdata-db

@@ -60,12 +60,13 @@ COLUMN_MAPPING = {
     "puissance_maximale":          "puissance_kw",
     # "Puissance fiscale" -> "puissance_fiscale"
     "puissance_fiscale":           "puissance_fiscale",
-    # --- CO2 (colonne principale WLTP/NEDC) ---
-    # "Essai CO2 type 1" -> "essai_co2_type_1"
-    "essai_co2_type_1":            "co2_g_km",
-    # Variantes min/max CO2 (colonnes supplémentaires conservées telles quelles)
-    "co2_vitesse_mixte_min":       "co2_mixte_min_g_km",
+    # --- CO2 (colonne principale = mixte WLTP en g/km) ---
+    # "CO2 vitesse mixte Min" -> "co2_vitesse_mixte_min" (valeurs en g/km, ex: "150,86")
+    "co2_vitesse_mixte_min":       "co2_g_km",
+    # "CO2 vitesse mixte Max" -> fallback si Min absent
     "co2_vitesse_mixte_max":       "co2_mixte_max_g_km",
+    # "Essai CO2 type 1" est en kg/km (ex: "0,234") — on le garde comme reference
+    "essai_co2_type_1":            "essai_co2_kg_km",
     # --- Consommations (L/100km) ---
     # "Conso vitesse mixte min/max" -> "conso_vitesse_mixte_min/max"
     "conso_vitesse_mixte_min":     "conso_mixte_min_l100",
@@ -356,8 +357,11 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
             log.warning("Rejet (colonne '%s' vide) : %d lignes exclues.", col, n_rejected)
 
     # 3. Conversion des colonnes numériques
+    #    Les données ADEME utilisent la virgule française ("150,86") comme séparateur décimal.
+    #    Il faut remplacer les virgules par des points avant pd.to_numeric.
     for col in NUMERIC_COLS:
         if col in df.columns:
+            df[col] = df[col].astype(str).str.replace(",", ".", regex=False)
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
     # 4. Imputation par médiane groupée (marque, modele)

@@ -3,7 +3,7 @@
 AutoInsight — Referentiel ADEME vs Marche Occasion
 Streamlit + Plotly | Glassmorphism Dark Mode | PostgreSQL Backend
 Avec rafraichissement automatique (scheduler) et manuel (bouton)
-+ Assistant IA "Ancien" (Groq Cloud - Llama3)
++ Assistant IA "L'expert" (Groq Cloud - Llama3)
 """
 
 import os
@@ -66,7 +66,7 @@ PALETTE = [COLOR_ACCENT, COLOR_PURPLE, COLOR_WARN, COLOR_GOLD,
            "#A8E6CF", "#FF8B94", "#B8E986", "#F8B500", COLOR_BLUE, "#fd79a8"]
 
 # =====================================================================
-# Groq Cloud Configuration (Assistant "Ancien")
+# Groq Cloud Configuration (Assistant "L'expert")
 # =====================================================================
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
@@ -397,7 +397,7 @@ hr {
     font-size: 0.78rem !important;
 }
 
-/* --- Assistant Ancien (Floating Chat Button) --- */
+/* --- Assistant L'expert (Floating Chat Button) --- */
 .ancien-fab {
     position: fixed;
     bottom: 24px;
@@ -530,10 +530,10 @@ hr {
 
 
 # =====================================================================
-# Assistant "Ancien" — Groq Cloud Integration
+# Assistant "L'expert" — Groq Cloud Integration
 # =====================================================================
 
-ANCIEN_SYSTEM_PROMPT = """Tu es "Ancien", un assistant expert en automobile intégré au dashboard AutoInsight.
+ANCIEN_SYSTEM_PROMPT = """Tu es "L'expert", un assistant expert en automobile intégré au dashboard AutoInsight.
 
 Tu aides les utilisateurs à :
 - Estimer le prix d'une voiture d'occasion (basé sur marque, modèle, année, kilométrage)
@@ -602,7 +602,7 @@ def _get_data_context() -> str:
 
 
 def ask_ancien(user_message: str, chat_history: list) -> str:
-    """Envoie une question à l'assistant Ancien via Groq Cloud."""
+    """Envoie une question à l'assistant L'expert via Groq Cloud."""
     if not GROQ_API_KEY or GROQ_API_KEY == "your_groq_api_key_here":
         return "⚠️ Clé API Groq non configurée. Ajoutez GROQ_API_KEY dans le fichier .env (gratuit sur console.groq.com)"
     
@@ -656,7 +656,7 @@ def ask_ancien(user_message: str, chat_history: list) -> str:
 
 
 def render_ancien_assistant():
-    """Affiche l'assistant Ancien dans le dashboard."""
+    """Affiche l'assistant L'expert dans le dashboard."""
     
     # Initialiser l'état du chat
     if "ancien_open" not in st.session_state:
@@ -673,14 +673,14 @@ def render_ancien_assistant():
     with st.sidebar:
         st.markdown("---")
         
-        # Header Ancien
+        # Header L'expert
         st.markdown(
             '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">'
             '<div style="width:40px;height:40px;border-radius:50%;'
             'background:linear-gradient(135deg,#6C5CE7,#00D4AA);'
             'display:flex;align-items:center;justify-content:center;font-size:20px;">🤖</div>'
             '<div>'
-            '<div style="color:#ccd6f6;font-weight:700;font-size:1rem;">Ancien</div>'
+            '<div style="color:#ccd6f6;font-weight:700;font-size:1rem;">L\'expert</div>'
             '<div style="color:#00D4AA;font-size:0.7rem;">Assistant IA • Groq</div>'
             '</div>'
             '</div>',
@@ -693,7 +693,7 @@ def render_ancien_assistant():
             if not st.session_state.ancien_messages:
                 st.markdown(
                     '<p style="color:#6b7db3;font-size:0.8rem;text-align:center;padding:20px;">'
-                    '👋 Salut ! Je suis <b>Ancien</b>, ton assistant auto.<br><br>'
+                    '👋 Salut ! Je suis <b>L\'expert</b>, ton assistant auto.<br><br>'
                     'Demande-moi une estimation de prix, des conseils sur les motorisations, '
                     'ou des infos sur la décote !'
                     '</p>',
@@ -739,7 +739,7 @@ def render_ancien_assistant():
             st.session_state.ancien_messages.append({"role": "user", "content": user_input})
             
             # Obtenir la réponse
-            with st.spinner("Ancien réfléchit..."):
+            with st.spinner("L'expert réfléchit..."):
                 response = ask_ancien(user_input, st.session_state.ancien_messages[:-1])
             
             # Ajouter la réponse
@@ -1582,7 +1582,7 @@ def main():
     # --- Sidebar ---
     df_ademe_f, df_occ_f = render_sidebar(df_ademe, df_occ)
     
-    # --- Assistant Ancien (IA) ---
+    # --- Assistant L'expert (IA) ---
     render_ancien_assistant()
 
     # ==================================================================

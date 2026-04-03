@@ -188,6 +188,7 @@ Assurez-vous d'être dans le dossier du projet, puis :
 ```bash
 docker-compose up --build
 ```
+Si docker-compose ne marche pas, il faut essayer docker compose (sans le tiret), car les versions très récentes de Docker ont intégré la commande directement.
 
 ### Que se passe-t-il ?
 

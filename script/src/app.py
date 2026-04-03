@@ -4,6 +4,19 @@ AutoInsight — Referentiel ADEME vs Marche Occasion
 Streamlit + Plotly | Glassmorphism Dark Mode | PostgreSQL Backend
 Avec rafraichissement automatique (scheduler) et manuel (bouton)
 + Assistant IA "L'expert" (Groq Cloud - Llama3)
+
+ARCHITECTURE :
+  - Frontend : Streamlit avec UI glassmorphism personnalisée (CSS inline)
+  - Backend  : PostgreSQL (2 tables principales : caracteristiques_techniques + annonces_occasion)
+  - ETL      : Pipeline automatisé (scheduler.py) pour rafraîchir les données
+  - IA       : Assistant conversationnel via API Groq (Llama 3.3 70B)
+
+WORKFLOW :
+  1. Au démarrage : charge les données depuis PostgreSQL (cache 5min via @st.cache_data)
+  2. Filtres sidebar : permettent de restreindre l'affichage par marque/carburant/année
+  3. KPIs : affichent des métriques agrégées (nb véhicules, prix moyen, CO2, décote)
+  4. Onglets : visualisations interactives (scatter, line, bar, heatmap)
+  5. Assistant IA : sidebar intégré pour questions contextuelles sur les données
 """
 
 import os
@@ -25,6 +38,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Import du scheduler pour le rafraîchissement automatique
+# Permet de lancer le pipeline ETL en arrière-plan (ingestion + scraping + transformation + load)
 try:
     from script.src.scheduler import (
         get_last_refresh, 
@@ -34,6 +48,7 @@ try:
     )
     SCHEDULER_AVAILABLE = True
 except ImportError:
+    # Fallback si le module scheduler n'est pas disponible (mode dégradé)
     SCHEDULER_AVAILABLE = False
     REFRESH_INTERVAL = 3600
     def get_last_refresh():
@@ -47,21 +62,27 @@ except ImportError:
 # Configuration
 # =====================================================================
 
+# Connexion PostgreSQL
+# Ces variables sont injectées via docker-compose.yml ou fichier .env
 DB_HOST     = os.getenv("DB_HOST", "db")
 DB_PORT     = int(os.getenv("DB_PORT", "5432"))
 DB_USER     = os.getenv("DB_USER", "etl_user")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "etl_password")
 DB_NAME     = os.getenv("DB_NAME", "etl_db")
 
+# Tables principales du Data Warehouse
+# TABLE_ADEME    : référentiel technique officiel (source : ADEME via data.gouv.fr)
+# TABLE_OCCASION : annonces du marché occasion (source : scraping AutoScout24/La Centrale)
 TABLE_ADEME    = "caracteristiques_techniques"
 TABLE_OCCASION = "annonces_occasion"
 
+# Thème graphique : palette dark mode avec accents colorés
 PLOTLY_TEMPLATE = "plotly_dark"
-COLOR_ACCENT    = "#00D4AA"
-COLOR_WARN      = "#FF6B6B"
-COLOR_GOLD      = "#FFD93D"
-COLOR_PURPLE    = "#6C5CE7"
-COLOR_BLUE      = "#74b9ff"
+COLOR_ACCENT    = "#00D4AA"  # Vert-turquoise (principal)
+COLOR_WARN      = "#FF6B6B"  # Rouge (alertes)
+COLOR_GOLD      = "#FFD93D"  # Jaune-or (highlights)
+COLOR_PURPLE    = "#6C5CE7"  # Violet (secondaire)
+COLOR_BLUE      = "#74b9ff"  # Bleu clair
 PALETTE = [COLOR_ACCENT, COLOR_PURPLE, COLOR_WARN, COLOR_GOLD,
            "#A8E6CF", "#FF8B94", "#B8E986", "#F8B500", COLOR_BLUE, "#fd79a8"]
 
@@ -69,9 +90,11 @@ PALETTE = [COLOR_ACCENT, COLOR_PURPLE, COLOR_WARN, COLOR_GOLD,
 # Groq Cloud Configuration (Assistant "L'expert")
 # =====================================================================
 
+# Groq Cloud offre un accès gratuit aux modèles Llama 3 via API REST
+# Créer une clé sur : https://console.groq.com/keys
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL = "llama-3.3-70b-versatile"  # Modèle gratuit Groq (2026)
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL = "llama-3.3-70b-versatile"  # Modèle gratuit Groq (2026) - 70B paramètres
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"  # Compatible OpenAI API
 
 # =====================================================================
 # SVG Logo
@@ -749,10 +772,14 @@ def render_ancien_assistant():
 
 
 # =====================================================================
-# Data layer
+# Data layer — Couche d'abstraction PostgreSQL
 # =====================================================================
 
 def _get_connection():
+    """
+    Ouvre une connexion PostgreSQL avec les paramètres de l'environnement.
+    Utilisé par toutes les fonctions de lecture/écriture DB.
+    """
     return psycopg2.connect(
         host=DB_HOST, port=DB_PORT,
         user=DB_USER, password=DB_PASSWORD, dbname=DB_NAME,
@@ -760,6 +787,10 @@ def _get_connection():
 
 
 def _table_exists(table: str) -> bool:
+    """
+    Vérifie si une table existe dans le schéma public.
+    Utile pour éviter les erreurs si le pipeline ETL n'a pas encore été exécuté.
+    """
     try:
         conn = _get_connection()
         cur = conn.cursor()
@@ -776,6 +807,13 @@ def _table_exists(table: str) -> bool:
 
 
 def _query_to_df(query: str) -> pd.DataFrame:
+    """
+    Exécute une requête SQL et retourne les résultats sous forme de DataFrame pandas.
+    
+    Gestion automatique des types :
+    - Conversion Decimal → float (psycopg2 retourne des Decimal pour NUMERIC)
+    - Gestion des NULL → NaN pandas
+    """
     conn = _get_connection()
     cur = conn.cursor()
     cur.execute(query)
@@ -786,7 +824,7 @@ def _query_to_df(query: str) -> pd.DataFrame:
     if not rows or not cols:
         return pd.DataFrame()
     df = pd.DataFrame(rows, columns=cols)
-    # Convertir les Decimal (psycopg2) en float pour eviter les erreurs de type pandas
+    # Convertir les Decimal (psycopg2) en float pour éviter les erreurs de type pandas
     from decimal import Decimal
     for col in df.columns:
         if df[col].apply(lambda x: isinstance(x, Decimal)).any():
@@ -796,6 +834,18 @@ def _query_to_df(query: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_ademe_data() -> pd.DataFrame:
+    """
+    Charge le référentiel technique ADEME depuis PostgreSQL.
+    
+    Cache : 5 minutes (300s) pour éviter de requêter la DB à chaque interaction
+    Retour : DataFrame avec caractéristiques techniques officielles des véhicules neufs
+    
+    Colonnes clés :
+    - marque, modele, carburant : identifiants du véhicule
+    - co2_g_km : émissions officielles WLTP (g/km)
+    - puissance_kw/fiscale : puissance moteur
+    - prix_neuf_eur : prix catalogue constructeur
+    """
     if not _table_exists(TABLE_ADEME):
         return pd.DataFrame()
     return _query_to_df(f"""
@@ -813,9 +863,23 @@ def load_ademe_data() -> pd.DataFrame:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_occasion_data() -> pd.DataFrame:
+    """
+    Charge les annonces du marché occasion + enrichissement ADEME via fuzzy join.
+    
+    Cache : 5 minutes (300s)
+    
+    JOINTURE IMPORTANTE :
+    - LEFT JOIN sur TABLE_ADEME via ademe_id (clé étrangère)
+    - Permet de récupérer les caractéristiques techniques officielles (CO2, puissance, prix neuf)
+    - match_score : score de confiance du fuzzy matching (0-1, 1 = match parfait)
+    
+    Colonnes enrichies :
+    - co2_ademe, puissance_ademe, prix_neuf_ademe : données ADEME associées
+    - Si ademe_id est NULL : véhicule non matché (pas de données techniques disponibles)
+    """
     if not _table_exists(TABLE_OCCASION):
         return pd.DataFrame()
-    # Requete optimisee : COALESCE pour eviter les erreurs si match_score est NULL
+    # Requête optimisée : COALESCE pour éviter les erreurs si match_score est NULL
     return _query_to_df(f"""
         SELECT a.marque, a.modele, a.version, a.annee,
                a.prix_eur, a.kilometrage_km, a.carburant,
@@ -832,6 +896,27 @@ def load_occasion_data() -> pd.DataFrame:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_kpi_aggregates() -> dict:
+    """
+    Calcule les KPIs (indicateurs clés de performance) affichés en haut du dashboard.
+    
+    Cache : 5 minutes
+    
+    KPIs calculés :
+    - n_ademe : nombre total de véhicules dans le référentiel ADEME
+    - n_occasion : nombre total d'annonces scrapées
+    - n_matched : nombre d'annonces enrichies avec données ADEME (fuzzy match réussi)
+    - avg_prix_occasion : prix moyen du marché occasion (€)
+    - avg_co2_ademe : émissions moyennes CO2 du référentiel ADEME (g/km)
+    - avg_match_score : qualité moyenne du fuzzy matching (0-1)
+    - avg_decote_pct : décote moyenne par rapport au prix neuf (%)
+    
+    LOGIQUE DÉCOTE :
+    Formule : (1 - prix_occasion / prix_neuf) × 100
+    Filtres qualité :
+    - Exclut prix_occasion > prix_neuf (erreurs de matching)
+    - Exclut décotes > 95% (aberrations type véhicule accidenté)
+    - Bornes : [0%, 95%] pour garantir la cohérence statistique
+    """
     result = {
         "n_ademe": 0, "n_occasion": 0, "n_matched": 0,
         "avg_prix_occasion": 0, "avg_co2_ademe": None,
@@ -847,7 +932,7 @@ def load_kpi_aggregates() -> dict:
             result["avg_co2_ademe"] = round(float(row[1]), 1) if row[1] is not None else None
 
         if _table_exists(TABLE_OCCASION):
-            # Requete optimisee avec COALESCE pour eviter erreurs sur match_score NULL
+            # Requête optimisée avec COALESCE pour éviter erreurs sur match_score NULL
             cur.execute(f"""
                 SELECT COUNT(*), 
                        COUNT(ademe_id), 
@@ -862,8 +947,8 @@ def load_kpi_aggregates() -> dict:
             result["avg_match_score"]   = round(float(row[3]), 3) if row[3] else 0
 
             if _table_exists(TABLE_ADEME):
-                # Calcul decote avec bornes [0%, 95%] pour eviter aberrations
-                # Exclut: prix_occasion > prix_neuf (erreur de match) et decotes > 95%
+                # Calcul décote avec bornes [0%, 95%] pour éviter aberrations
+                # Exclut: prix_occasion > prix_neuf (erreur de match) et décotes > 95%
                 cur.execute(f"""
                     SELECT AVG(decote_pct) FROM (
                         SELECT 
@@ -938,12 +1023,27 @@ def _empty_state(icon: str = "&#128269;", title: str = "Aucune donnee disponible
 # =====================================================================
 
 def chart_prix_vs_co2(df_occ: pd.DataFrame):
+    """
+    Scatter plot : Prix du marché occasion vs Émissions CO2 officielles ADEME.
+    
+    Analyse clé : permet de visualiser la relation entre le prix d'un véhicule d'occasion
+    et ses émissions CO2 (WLTP) officielles.
+    
+    Encodage visuel :
+    - Axe X : CO2 (g/km) — émissions officielles du référentiel ADEME
+    - Axe Y : Prix (€) — prix du marché occasion
+    - Taille des bulles : puissance moteur (kW) — plus le cercle est grand, plus c'est puissant
+    - Couleur : marque — différencie les constructeurs
+    
+    Insight attendu : généralement, véhicules puissants = CO2 élevé + prix élevé
+    """
     df = df_occ.dropna(subset=["prix_eur", "co2_ademe"]).copy()
     if df.empty:
         st.warning("Aucune annonce avec CO2 ADEME disponible.")
-        st.info("Les annonces doivent etre matchees avec le referentiel ADEME pour cette visualisation.")
+        st.info("Les annonces doivent être matchées avec le référentiel ADEME pour cette visualisation.")
         return
 
+    # Nettoyage : puissance par défaut 100kW si manquante, minimum 30kW (cohérence visuelle)
     df["puissance_ademe"] = df["puissance_ademe"].fillna(100).clip(lower=30)
     df["marque_upper"]    = df["marque"].str.upper()
 
@@ -958,17 +1058,33 @@ def chart_prix_vs_co2(df_occ: pd.DataFrame):
         size_max=40, opacity=0.85,
     )
     fig.update_layout(**_base_layout(), height=560,
-                      title=dict(text="Prix du marche vs Emissions CO2 officielles",
+                      title=dict(text="Prix du marché vs Émissions CO2 officielles",
                                  font=dict(size=16, color="#ccd6f6")))
     st.plotly_chart(fig, use_container_width=True)
 
 
 def chart_decote_par_annee(df_occ: pd.DataFrame):
+    """
+    Courbe de décote : évolution du prix moyen selon l'année de mise en circulation.
+    
+    Analyse clé : permet de visualiser la dépréciation des véhicules avec l'âge.
+    Plus un véhicule est ancien, plus son prix diminue (en général).
+    
+    FILTRE QUALITÉ STATISTIQUE :
+    - Ne conserve que les années avec au moins 5 annonces
+    - Évite les pics aberrants dus à une seule annonce très chère/pas chère
+    - Garantit une représentativité minimale par année
+    
+    Visualisation :
+    - Courbe lissée (spline) pour meilleure lisibilité
+    - Gradient sous la courbe pour effet visuel glassmorphism
+    - Bornes [2005-2026] pour cohérence (hors véhicules anciens/non commercialisés)
+    """
     df = df_occ.dropna(subset=["annee", "prix_eur"]).copy()
     df = df[(df["annee"] >= 2005) & (df["annee"] <= 2026)]
     if df.empty:
-        st.warning("Aucune donnee pour la courbe de decote.")
-        st.info("Besoin d'annonces avec annee de mise en service valide (2005-2026).")
+        st.warning("Aucune donnée pour la courbe de décote.")
+        st.info("Besoin d'annonces avec année de mise en service valide (2005-2026).")
         return
 
     agg = df.groupby("annee").agg(
@@ -977,13 +1093,13 @@ def chart_decote_par_annee(df_occ: pd.DataFrame):
         n=("prix_eur", "count"),
     ).reset_index()
     
-    # FILTRE : ne garder que les annees avec au moins 5 annonces
-    # pour eviter les pics aberrants dus a une seule annonce
+    # FILTRE : ne garder que les années avec au moins 5 annonces
+    # pour éviter les pics aberrants dus à une seule annonce
     agg = agg[agg["n"] >= 5]
     
     if agg.empty:
-        st.warning("Pas assez de donnees pour afficher la courbe de decote.")
-        st.info("Chaque annee doit avoir au moins 5 annonces pour etre affichee.")
+        st.warning("Pas assez de données pour afficher la courbe de décote.")
+        st.info("Chaque année doit avoir au moins 5 annonces pour être affichée.")
         return
 
     fig = go.Figure()

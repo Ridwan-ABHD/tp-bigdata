@@ -51,7 +51,7 @@ def run_pipeline() -> dict:
     
     try:
         log.info("=" * 60)
-        log.info("🔄 RAFRAÎCHISSEMENT DES DONNÉES")
+        log.info("RAFRAICHISSEMENT DES DONNEES")
         log.info("=" * 60)
         
         # Etape 1 — Ingestion API ADEME -> MinIO
@@ -94,7 +94,7 @@ def run_pipeline() -> dict:
         stats["ended_at"] = _last_refresh
         
         log.info("=" * 60)
-        log.info("✅ RAFRAÎCHISSEMENT TERMINÉ")
+        log.info("RAFRAICHISSEMENT TERMINE")
         log.info(f"   ADEME    : {stats['ademe_count']} véhicules")
         log.info(f"   Scraping : {stats['scraping_count']} annonces brutes")
         log.info(f"   Occasion : {stats['occasion_count']} annonces chargées")
@@ -103,7 +103,7 @@ def run_pipeline() -> dict:
     except Exception as e:
         stats["error"] = str(e)
         stats["ended_at"] = datetime.now()
-        log.error(f"❌ Erreur pendant le rafraîchissement : {e}")
+        log.error(f"Erreur pendant le rafraîchissement : {e}")
     
     return stats
 
@@ -112,20 +112,20 @@ def scheduler_loop():
     """Boucle principale du scheduler."""
     global _last_refresh
     
-    log.info(f"🕐 Scheduler démarré (intervalle : {REFRESH_INTERVAL}s = {REFRESH_INTERVAL/3600:.1f}h)")
+    log.info(f"Scheduler demarré (intervalle : {REFRESH_INTERVAL}s = {REFRESH_INTERVAL/3600:.1f}h)")
     
     # Premier rafraîchissement au démarrage
     run_pipeline()
     
     while not _stop_event.is_set():
         # Attendre l'intervalle (ou l'arrêt)
-        log.info(f"⏳ Prochain rafraîchissement dans {REFRESH_INTERVAL}s...")
+        log.info(f"Prochain rafraîchissement dans {REFRESH_INTERVAL}s...")
         _stop_event.wait(REFRESH_INTERVAL)
         
         if not _stop_event.is_set():
             run_pipeline()
     
-    log.info("🛑 Scheduler arrêté.")
+    log.info("Scheduler arrêté.")
 
 
 def start_scheduler() -> Thread:

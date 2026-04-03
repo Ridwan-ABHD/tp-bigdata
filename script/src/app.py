@@ -3,11 +3,13 @@
 AutoInsight — Referentiel ADEME vs Marche Occasion
 Streamlit + Plotly | Glassmorphism Dark Mode | PostgreSQL Backend
 Avec rafraichissement automatique (scheduler) et manuel (bouton)
++ Assistant IA "Ancien" (Groq Cloud - Llama3)
 """
 
 import os
 import subprocess
 import sys
+import json
 from datetime import datetime
 from threading import Thread
 
@@ -16,6 +18,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import psycopg2
+import requests
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -61,6 +64,14 @@ COLOR_PURPLE    = "#6C5CE7"
 COLOR_BLUE      = "#74b9ff"
 PALETTE = [COLOR_ACCENT, COLOR_PURPLE, COLOR_WARN, COLOR_GOLD,
            "#A8E6CF", "#FF8B94", "#B8E986", "#F8B500", COLOR_BLUE, "#fd79a8"]
+
+# =====================================================================
+# Groq Cloud Configuration (Assistant "Ancien")
+# =====================================================================
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL = "llama-3.3-70b-versatile"  # Modèle gratuit Groq (2026)
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # =====================================================================
 # SVG Logo
@@ -385,8 +396,356 @@ hr {
     color: #4a5568 !important;
     font-size: 0.78rem !important;
 }
+
+/* --- Assistant Ancien (Floating Chat Button) --- */
+.ancien-fab {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #6C5CE7 0%, #00D4AA 100%);
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 8px 32px rgba(108,92,231,0.4), 0 0 20px rgba(0,212,170,0.2);
+    z-index: 9999;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.ancien-fab:hover {
+    transform: scale(1.1) translateY(-4px);
+    box-shadow: 0 12px 40px rgba(108,92,231,0.5), 0 0 30px rgba(0,212,170,0.3);
+}
+.ancien-fab svg {
+    width: 28px;
+    height: 28px;
+    fill: white;
+}
+.ancien-chat-container {
+    position: fixed;
+    bottom: 100px;
+    right: 24px;
+    width: 380px;
+    max-height: 500px;
+    background: linear-gradient(145deg, rgba(12,18,45,0.98), rgba(8,12,30,0.99));
+    border: 1px solid rgba(108,92,231,0.3);
+    border-radius: 20px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 40px rgba(108,92,231,0.1);
+    z-index: 9998;
+    overflow: hidden;
+    backdrop-filter: blur(24px);
+}
+.ancien-header {
+    background: linear-gradient(135deg, rgba(108,92,231,0.3), rgba(0,212,170,0.2));
+    padding: 16px 20px;
+    border-bottom: 1px solid rgba(108,92,231,0.2);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.ancien-header .avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #6C5CE7, #00D4AA);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+}
+.ancien-header .name {
+    color: #ccd6f6;
+    font-weight: 700;
+    font-size: 1rem;
+    font-family: 'Montserrat', sans-serif;
+}
+.ancien-header .status {
+    color: #00D4AA;
+    font-size: 0.7rem;
+    font-family: 'Montserrat', sans-serif;
+}
+.ancien-messages {
+    height: 300px;
+    overflow-y: auto;
+    padding: 16px;
+}
+.ancien-msg {
+    margin-bottom: 12px;
+    max-width: 85%;
+}
+.ancien-msg.user {
+    margin-left: auto;
+    background: linear-gradient(135deg, rgba(0,212,170,0.2), rgba(0,212,170,0.1));
+    border: 1px solid rgba(0,212,170,0.3);
+    border-radius: 16px 16px 4px 16px;
+    padding: 10px 14px;
+    color: #ccd6f6;
+    font-size: 0.85rem;
+}
+.ancien-msg.assistant {
+    background: linear-gradient(135deg, rgba(108,92,231,0.15), rgba(108,92,231,0.08));
+    border: 1px solid rgba(108,92,231,0.2);
+    border-radius: 16px 16px 16px 4px;
+    padding: 10px 14px;
+    color: #b0bdd4;
+    font-size: 0.85rem;
+}
+.ancien-input-area {
+    padding: 12px 16px;
+    border-top: 1px solid rgba(108,92,231,0.15);
+    display: flex;
+    gap: 10px;
+}
+.ancien-input-area input {
+    flex: 1;
+    background: rgba(15,22,50,0.8);
+    border: 1px solid rgba(108,92,231,0.2);
+    border-radius: 12px;
+    padding: 10px 14px;
+    color: #ccd6f6;
+    font-size: 0.85rem;
+    outline: none;
+}
+.ancien-input-area input:focus {
+    border-color: rgba(108,92,231,0.5);
+}
+.ancien-input-area button {
+    background: linear-gradient(135deg, #6C5CE7, #00D4AA);
+    border: none;
+    border-radius: 12px;
+    padding: 10px 16px;
+    color: white;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+.ancien-input-area button:hover {
+    transform: scale(1.05);
+}
 </style>
 """
+
+
+# =====================================================================
+# Assistant "Ancien" — Groq Cloud Integration
+# =====================================================================
+
+ANCIEN_SYSTEM_PROMPT = """Tu es "Ancien", un assistant expert en automobile intégré au dashboard AutoInsight.
+
+Tu aides les utilisateurs à :
+- Estimer le prix d'une voiture d'occasion (basé sur marque, modèle, année, kilométrage)
+- Calculer la décote approximative (différence prix neuf vs occasion)
+- Comparer les motorisations (essence, diesel, hybride, électrique)
+- Conseiller sur la consommation et l'impact CO2
+- Répondre aux questions sur le marché automobile français
+
+Contexte des données disponibles :
+- Référentiel ADEME : données officielles CO2, consommation, prix neuf des véhicules neufs
+- AutoScout24 : annonces du marché de l'occasion (prix, kilométrage, année)
+
+Règles :
+- Réponds en français, de manière concise et utile
+- Donne des estimations réalistes avec des fourchettes de prix
+- Précise toujours que ce sont des estimations basées sur le marché actuel
+- Sois amical et accessible, tu parles à des étudiants/particuliers
+- Si tu ne sais pas, dis-le honnêtement
+
+Format : Réponses courtes (max 150 mots), utilise des emojis avec parcimonie pour rendre ça vivant."""
+
+
+def _get_data_context() -> str:
+    """Récupère un résumé des données actuelles pour contextualiser les réponses."""
+    try:
+        conn = _get_connection()
+        cur = conn.cursor()
+        
+        context_parts = []
+        
+        # Stats ADEME
+        cur.execute(f'SELECT COUNT(*), AVG(co2_g_km), AVG(prix_neuf_eur) FROM "{TABLE_ADEME}"')
+        row = cur.fetchone()
+        if row and row[0]:
+            context_parts.append(
+                f"Référentiel ADEME: {row[0]} véhicules, CO2 moyen {row[1]:.0f}g/km, prix neuf moyen {row[2]:,.0f}€"
+            )
+        
+        # Stats Occasion
+        cur.execute(f'SELECT COUNT(*), AVG(prix_eur), AVG(kilometrage_km) FROM "{TABLE_OCCASION}"')
+        row = cur.fetchone()
+        if row and row[0]:
+            context_parts.append(
+                f"Marché occasion: {row[0]} annonces, prix moyen {row[1]:,.0f}€, km moyen {row[2]:,.0f}km"
+            )
+        
+        # Top marques occasion
+        cur.execute(f'''
+            SELECT marque, COUNT(*) as n, AVG(prix_eur) as avg_prix 
+            FROM "{TABLE_OCCASION}" 
+            GROUP BY marque 
+            ORDER BY n DESC 
+            LIMIT 5
+        ''')
+        top_marques = cur.fetchall()
+        if top_marques:
+            marques_str = ", ".join([f"{m[0]} ({m[1]} annonces, ~{m[2]:,.0f}€)" for m in top_marques])
+            context_parts.append(f"Top marques: {marques_str}")
+        
+        cur.close()
+        conn.close()
+        
+        return "\n".join(context_parts) if context_parts else "Données non disponibles"
+    except Exception:
+        return "Données non disponibles"
+
+
+def ask_ancien(user_message: str, chat_history: list) -> str:
+    """Envoie une question à l'assistant Ancien via Groq Cloud."""
+    if not GROQ_API_KEY or GROQ_API_KEY == "your_groq_api_key_here":
+        return "⚠️ Clé API Groq non configurée. Ajoutez GROQ_API_KEY dans le fichier .env (gratuit sur console.groq.com)"
+    
+    # Construire le contexte avec les données actuelles
+    data_context = _get_data_context()
+    
+    messages = [
+        {"role": "system", "content": f"{ANCIEN_SYSTEM_PROMPT}\n\nDonnées actuelles du dashboard:\n{data_context}"},
+    ]
+    
+    # Ajouter l'historique (max 6 derniers messages pour limiter les tokens)
+    for msg in chat_history[-6:]:
+        messages.append(msg)
+    
+    messages.append({"role": "user", "content": user_message})
+    
+    try:
+        response = requests.post(
+            GROQ_API_URL,
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": GROQ_MODEL,
+                "messages": messages,
+                "temperature": 0.7,
+                "max_tokens": 500,
+            },
+            timeout=30,
+        )
+        
+        if response.status_code == 200:
+            return response.json()["choices"][0]["message"]["content"]
+        elif response.status_code == 401:
+            return "⚠️ Clé API invalide. Vérifiez GROQ_API_KEY dans .env"
+        elif response.status_code == 429:
+            return "⏳ Limite de requêtes atteinte. Réessayez dans quelques secondes."
+        else:
+            # Afficher plus de détails pour débugger
+            try:
+                error_detail = response.json().get("error", {}).get("message", response.text[:200])
+            except:
+                error_detail = response.text[:200]
+            return f"❌ Erreur API ({response.status_code}): {error_detail}"
+    
+    except requests.exceptions.Timeout:
+        return "⏱️ Timeout — le serveur met trop de temps à répondre."
+    except Exception as e:
+        return f"❌ Erreur: {str(e)[:100]}"
+
+
+def render_ancien_assistant():
+    """Affiche l'assistant Ancien dans le dashboard."""
+    
+    # Initialiser l'état du chat
+    if "ancien_open" not in st.session_state:
+        st.session_state.ancien_open = False
+    if "ancien_messages" not in st.session_state:
+        st.session_state.ancien_messages = []
+    if "ancien_input" not in st.session_state:
+        st.session_state.ancien_input = ""
+    
+    # Bouton flottant pour ouvrir/fermer
+    col_spacer, col_ancien = st.columns([10, 1])
+    
+    # Interface du chat dans la sidebar ou en popup
+    with st.sidebar:
+        st.markdown("---")
+        
+        # Header Ancien
+        st.markdown(
+            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">'
+            '<div style="width:40px;height:40px;border-radius:50%;'
+            'background:linear-gradient(135deg,#6C5CE7,#00D4AA);'
+            'display:flex;align-items:center;justify-content:center;font-size:20px;">🤖</div>'
+            '<div>'
+            '<div style="color:#ccd6f6;font-weight:700;font-size:1rem;">Ancien</div>'
+            '<div style="color:#00D4AA;font-size:0.7rem;">Assistant IA • Groq</div>'
+            '</div>'
+            '</div>',
+            unsafe_allow_html=True
+        )
+        
+        # Zone de messages
+        chat_container = st.container(height=250)
+        with chat_container:
+            if not st.session_state.ancien_messages:
+                st.markdown(
+                    '<p style="color:#6b7db3;font-size:0.8rem;text-align:center;padding:20px;">'
+                    '👋 Salut ! Je suis <b>Ancien</b>, ton assistant auto.<br><br>'
+                    'Demande-moi une estimation de prix, des conseils sur les motorisations, '
+                    'ou des infos sur la décote !'
+                    '</p>',
+                    unsafe_allow_html=True
+                )
+            else:
+                for msg in st.session_state.ancien_messages:
+                    if msg["role"] == "user":
+                        st.markdown(
+                            f'<div style="background:rgba(0,212,170,0.15);border-radius:12px;'
+                            f'padding:8px 12px;margin:4px 0;margin-left:20%;color:#ccd6f6;font-size:0.82rem;">'
+                            f'{msg["content"]}</div>',
+                            unsafe_allow_html=True
+                        )
+                    else:
+                        st.markdown(
+                            f'<div style="background:rgba(108,92,231,0.12);border-radius:12px;'
+                            f'padding:8px 12px;margin:4px 0;margin-right:10%;color:#b0bdd4;font-size:0.82rem;">'
+                            f'🤖 {msg["content"]}</div>',
+                            unsafe_allow_html=True
+                        )
+        
+        # Input
+        user_input = st.text_input(
+            "Message",
+            placeholder="Ex: Combien vaut une Clio 2019 à 60k km ?",
+            key="ancien_chat_input",
+            label_visibility="collapsed"
+        )
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            send_btn = st.button("Envoyer", key="ancien_send", use_container_width=True)
+        with col2:
+            clear_btn = st.button("🗑️", key="ancien_clear", help="Effacer la conversation")
+        
+        if clear_btn:
+            st.session_state.ancien_messages = []
+            st.rerun()
+        
+        if send_btn and user_input.strip():
+            # Ajouter le message utilisateur
+            st.session_state.ancien_messages.append({"role": "user", "content": user_input})
+            
+            # Obtenir la réponse
+            with st.spinner("Ancien réfléchit..."):
+                response = ask_ancien(user_input, st.session_state.ancien_messages[:-1])
+            
+            # Ajouter la réponse
+            st.session_state.ancien_messages.append({"role": "assistant", "content": response})
+            
+            st.rerun()
 
 
 # =====================================================================
@@ -768,7 +1127,7 @@ def chart_co2_distribution(df_ademe: pd.DataFrame):
     
     # Ordre logique des carburants (du plus polluant au moins polluant)
     ordre_thermique = ["DIESEL", "ESSENCE", "HYBRIDE DIESEL", "HYBRIDE ESSENCE", "GPL/GNV"]
-    df_thermique = df[df["carburant_simple"] != "ELECTRIQUE"]
+    df_thermique = df[df["carburant_simple"] != "ELECTRIQUE"].copy()
     df_thermique["carburant_simple"] = pd.Categorical(
         df_thermique["carburant_simple"], categories=ordre_thermique, ordered=True
     )
@@ -1222,28 +1581,27 @@ def main():
 
     # --- Sidebar ---
     df_ademe_f, df_occ_f = render_sidebar(df_ademe, df_occ)
+    
+    # --- Assistant Ancien (IA) ---
+    render_ancien_assistant()
 
     # ==================================================================
     # KPI Cards
     # ==================================================================
 
-    k1, k2, k3, k4, k5 = st.columns(5)
+    k1, k2, k3, k4 = st.columns(4)
 
     with k1:
         st.metric("Vehicules ADEME", _fmt_number(kpi["n_ademe"]), delta="referentiel")
     with k2:
         st.metric("Annonces Occasion", _fmt_number(kpi["n_occasion"]), delta="AutoScout24")
     with k3:
-        pct = round(kpi["n_matched"] / kpi["n_occasion"] * 100, 1) if kpi["n_occasion"] > 0 else 0
-        st.metric("Taux de correspondance", f"{pct}%",
-                  delta=f"{kpi['n_matched']} appariements" if kpi["n_matched"] else None)
-    with k4:
         if kpi["avg_decote_pct"] is not None:
             st.metric("Decote moyenne", f"{kpi['avg_decote_pct']}%",
                       delta="neuf -> occasion", delta_color="inverse")
         else:
             st.metric("Decote moyenne", "--")
-    with k5:
+    with k4:
         st.metric("CO2 moyen ADEME", _fmt_co2(kpi["avg_co2_ademe"]))
 
     st.markdown("")

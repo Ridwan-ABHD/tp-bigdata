@@ -1485,8 +1485,12 @@ def _run_scraping():
             cwd=os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         )
         return result2.returncode == 0, result1.stdout + result1.stderr + "\n" + result2.stdout + result2.stderr
+    except subprocess.TimeoutExpired:
+        return False, "Timeout: le scraping a pris trop de temps (>5 min). Verifiez votre connexion internet."
+    except ConnectionError:
+        return False, "Erreur reseau: impossible de se connecter a AutoScout24. Verifiez votre connexion internet."
     except Exception as e:
-        return False, str(e)
+        return False, f"Erreur inattendue: {str(e)}"
 
 
 def main():
@@ -1765,6 +1769,9 @@ def main():
         '<p class="copy">'
         f'&copy; {datetime.now().year} &mdash; Ridwan &amp; Henri &nbsp;|&nbsp; '
         'Analytics Automobile &nbsp;|&nbsp; Sup de Vinci'
+        '</p>'
+        '<p style="color:#4a5568; font-size:0.7rem; margin-top:8px;">'
+        'Merci a nos formateurs et a Sup de Vinci pour ce projet enrichissant.'
         '</p>'
         '</div>',
         unsafe_allow_html=True,

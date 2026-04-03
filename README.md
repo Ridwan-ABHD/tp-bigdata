@@ -1,5 +1,12 @@
 # AutoInsight — Pipeline ETL Automobile
 
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat&logo=python&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=flat&logo=postgresql&logoColor=white)
+![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=flat&logo=streamlit&logoColor=white)
+![MinIO](https://img.shields.io/badge/MinIO-C72E49?style=flat&logo=minio&logoColor=white)
+![Llama 3](https://img.shields.io/badge/Llama_3-Groq-00D4AA?style=flat)
+
 > **Analyse du Marché de l'Occasion vs Données Officielles ADEME**
 
 Projet académique réalisé dans le cadre du **Bachelor 2 Data & IA** à Sup de Vinci.
@@ -31,7 +38,7 @@ Ce projet compare **les données officielles des constructeurs automobiles** (é
 
 - **Visualiser la décote réelle** des véhicules selon leur motorisation
 - **Comparer** les performances écologiques officielles vs le prix de revente
-- **Interroger un assistant IA** ("Ancien") pour des estimations de prix
+- **Interroger un assistant IA** ("L'expert") pour des estimations de prix — propulsé par **Llama 3.3 70B** via Groq Cloud
 
 ### Sources de données :
 
@@ -492,6 +499,31 @@ tp-bigdata/
     |-- gouvernance/         # Documentation gouvernance des données
     +-- cours/               # Ressources de cours
 ```
+
+---
+
+## Gouvernance & Véracité des Données
+
+Le pipeline intègre des **filtres de qualité stricts** pour garantir la fiabilité des analyses :
+
+### Filtres de prix
+| Type | Seuil min | Seuil max | Exemple rejeté |
+|------|-----------|-----------|----------------|
+| Standard | 1 000 EUR | 80 000 EUR | Dacia à 250k EUR |
+| Premium (BMW, Mercedes, Porsche...) | 1 000 EUR | 300 000 EUR | - |
+
+### Filtres kilométrage
+- **Absolu** : 0 à 500 000 km
+- **IQR** : Rejet des outliers statistiques (Q1 - 1.5×IQR, Q3 + 1.5×IQR)
+
+### Matching ADEME ↔ Occasion
+- **Algorithme** : Fuzzy matching (token_set_ratio)
+- **Seuil de score** : 85% minimum
+- **Validation carburant** : Stricte (une électrique ne peut pas matcher une thermique)
+- **Décote bornée** : 0% à 95% (évite les valeurs aberrantes)
+
+### Taux de matching typique
+Entre 15% et 25% selon les marques — un taux bas est normal car le matching est volontairement strict pour garantir la qualité.
 
 ---
 

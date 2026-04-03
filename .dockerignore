@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment files (secrets)
+.env
+
+# Git
+.git/
+.gitignore
+
+# Documentation (not needed in image)
+documentation/
+*.md
+!README.md
+
+# Cache and logs
+*.log
+.cache/
+.pytest_cache/
+
+# OS files
+.DS_Store
+Thumbs.db
